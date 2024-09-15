@@ -1,0 +1,8 @@
+{
+  "include": ["."],
+  "exclude": ["node_modules", "dist"],
+  "outputFile": false,
+  "usePastebin": true,
+  "fileExtensions": [".py", ".js", ".ts", ".tsx"],
+  "chunkSize": 90000
+}
