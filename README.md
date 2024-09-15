@@ -77,14 +77,12 @@ The output format is:
 
 ```markdown
 ## Directory Structure
-```
+
 directory structure here
-```
 
 ## path/to/filename.ext
 ```ext
 file content
-```
 
 ------ 90000 character chunk split ------
 
