@@ -4,23 +4,8 @@ cpai is a command-line tool that concatenates multiple files into a single markd
 
 ## Installation
 
-1. Clone this repository:
    ```
-   git clone https://github.com/sockdrawermoney/cpai.git
-   cd cpai
-   ```
-
-2. Make sure you have Python 3.6+ installed.
-
-3. (Optional) Create and activate a virtual environment:
-   ```
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows, use `venv\Scripts\activate`
-   ```
-
-4. Install the package:
-   ```
-   pip install -e .
+   pip install https://github.com/sockdrawermoney/cpai.git
    ```
 
 ## Usage
