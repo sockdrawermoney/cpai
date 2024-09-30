@@ -5,7 +5,7 @@ cpai is a command-line tool that concatenates multiple files into a single markd
 ## Installation
 
    ```
-   pip install https://github.com/sockdrawermoney/cpai.git
+   pip install git+https://github.com/sockdrawermoney/cpai.git
    ```
 
 ## Usage
