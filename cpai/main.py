@@ -5,6 +5,7 @@ import argparse
 import subprocess
 import textwrap
 import logging
+import fnmatch
 
 # Function to configure logging
 def configure_logging(debug):
@@ -22,7 +23,12 @@ def read_config():
         "exclude": ["node_modules", "dist"],
         "outputFile": False,
         "usePastebin": True,
-        "fileExtensions": [".ts", ".js", ".py"],
+        "fileExtensions": [
+            ".ts", ".js", ".py", ".rs", ".sol", ".go", ".jsx", ".tsx", 
+            ".css", ".scss", ".svelte", ".html", ".java", ".c", ".cpp", 
+            ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh", 
+            ".bash", ".md", ".json", ".yaml", ".yml", ".toml"
+        ],
         "chunkSize": DEFAULT_CHUNK_SIZE
     }
     try:
@@ -40,14 +46,45 @@ def read_config():
         logging.debug("Configuration file not found. Using default configuration.")
         return default_config
 
+def parse_gitignore(gitignore_path):
+    ignore_patterns = []
+    try:
+        with open(gitignore_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    ignore_patterns.append(line)
+    except FileNotFoundError:
+        pass
+    return ignore_patterns
+
+def should_ignore(file_path, ignore_patterns):
+    for pattern in ignore_patterns:
+        if fnmatch.fnmatch(file_path, pattern):
+            return True
+    return False
+
+def get_ignore_patterns():
+    ignore_patterns = []
+    current_dir = os.getcwd()
+    while True:
+        gitignore_path = os.path.join(current_dir, '.gitignore')
+        ignore_patterns.extend(parse_gitignore(gitignore_path))
+        parent_dir = os.path.dirname(current_dir)
+        if parent_dir == current_dir:
+            break
+        current_dir = parent_dir
+    return ignore_patterns
+
 def get_files(dir, config):
     logging.debug(f"Getting files from directory: {dir}")
     files = []
+    ignore_patterns = get_ignore_patterns()
     for root, _, filenames in os.walk(dir):
         for filename in filenames:
             full_path = os.path.join(root, filename)
             rel_path = os.path.relpath(full_path, start=os.getcwd())
-            if any(exclude in rel_path for exclude in config['exclude']):
+            if any(exclude in rel_path for exclude in config['exclude']) or should_ignore(rel_path, ignore_patterns):
                 continue
             if os.path.splitext(filename)[1] in config['fileExtensions']:
                 files.append(rel_path)
