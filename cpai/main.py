@@ -161,20 +161,51 @@ def format_content(files):
         output += f"\n## {file}\n```{extension}\n{content}\n```\n"
     return output
 
-def chunk_content(content, chunk_size):
+def chunk_content(content, chunk_size, files):
     logging.debug(f"Chunking content with chunk size: {chunk_size}")
     chunks = textwrap.wrap(content, chunk_size, break_long_words=False, replace_whitespace=False)
-    logging.debug(f"Number of chunks created: {len(chunks)}")
-    for i, chunk in enumerate(chunks):
-        logging.debug(f"Chunk {i+1}: {chunk[:50]}...")  # Log the first 50 characters of each chunk
-    try:
-        separator = f"\n\n\n\n\n------ {chunk_size} character chunk split ------\n\n\n\n\n"
-        result = separator.join(chunks)
-        logging.debug("Chunking completed successfully")
-        return result
-    except KeyError as e:
-        logging.error(f"KeyError during chunking: {e}", exc_info=True)
-        raise
+    
+    if len(chunks) > 1:
+        # Generate tree structure of included files
+        tree = format_tree(files)
+        
+        print("\nWarning: Content exceeds chunk size and will be split into multiple chunks.")
+        print("\nIncluded files:")
+        print(tree)
+        print("\nTo reduce content size, you can:")
+        print("1. Create a cpai.config.json file to customize inclusion/exclusion")
+        print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
+        print("3. Be more specific about which directories to process")
+        print("\nPress Enter to continue...")
+        input()
+    
+    return chunks
+
+def format_tree(files):
+    """Format files into a tree structure for display"""
+    tree = {}
+    for file in files:
+        parts = file.split(os.sep)
+        current = tree
+        for part in parts[:-1]:
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+        current[parts[-1]] = None
+    
+    return format_tree_string(tree)
+
+def format_tree_string(tree, prefix=""):
+    """Convert tree dictionary to string representation"""
+    result = []
+    items = list(tree.items())
+    for i, (name, subtree) in enumerate(items):
+        is_last = i == len(items) - 1
+        result.append(prefix + ("└── " if is_last else "├── ") + name)
+        if subtree is not None:
+            extension = "    " if is_last else "│   "
+            result.extend(format_tree_string(subtree, prefix + extension))
+    return "\n".join(result)
 
 def write_output(content, config):
     logging.debug("Writing output")
@@ -187,7 +218,7 @@ def write_output(content, config):
         logging.info(f"Output written to {output_file}")
 
     if config['usePastebin']:
-        chunks = chunk_content(content, config['chunkSize']).split("\n\n\n\n\n------ ")
+        chunks = chunk_content(content, config['chunkSize'], []).split("\n\n\n\n\n------ ")
         for i, chunk in enumerate(chunks, 1):
             if i > 1:
                 chunk = "------ " + chunk
@@ -219,7 +250,7 @@ def cpai(args, cli_options):
                          include_configs=cli_options.get('include_configs', False))
 
     content = format_content(files)
-    chunked_content = chunk_content(content, config['chunkSize'])
+    chunked_content = chunk_content(content, config['chunkSize'], files)
 
     if len(content) > config['chunkSize']:
         logging.warning(f"Output size ({len(content)} characters) exceeds the chunk size ({config['chunkSize']} characters). It will be split into multiple parts.")
@@ -233,6 +264,7 @@ def main():
     parser.add_argument('-n', '--noclipboard', action='store_true', help="Don't copy to clipboard")
     parser.add_argument('-a', '--all', action='store_true', help="Include all files (including tests, configs, etc.)")
     parser.add_argument('-c', '--configs', action='store_true', help="Include configuration files")
+    parser.add_argument('-x', '--exclude', nargs='+', help="Additional patterns to exclude")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
     args = parser.parse_args()
 

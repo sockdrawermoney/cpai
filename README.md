@@ -21,12 +21,22 @@ Options:
 - `-n, --noclipboard`: Don't copy to clipboard.
 - `-a, --all`: Include all files (including tests, configs, etc.).
 - `-c, --configs`: Include configuration files.
+- `-x PATTERN [PATTERN...], --exclude PATTERN [PATTERN...]`: Additional patterns to exclude.
 
 If no files or directories are specified, cpai will process all supported files in the current directory.
 
 Examples:
 ```
-# Process only core source files (default behavior)
+# Process src/ directory but exclude specific paths
+cpai src/ -x "**/*.test.js" "docs/"
+
+# Process multiple directories but exclude specific ones
+cpai src/ lib/ -x test/ docs/ "*.spec.ts"
+
+# Process all files except tests and specific directories
+cpai -a -x tests/ documentation/ "*.md"
+
+# Process core source files (default behavior)
 cpai src/
 
 # Process all files including tests and configs
@@ -100,8 +110,24 @@ By default, cpai will:
 1. Generate a directory structure of the processed files.
 2. Concatenate the content of all processed files into a single markdown string.
 3. If the content exceeds the specified chunk size:
-   - When writing to file: The content will be written as a single file with chunk separators.
-   - When copying to clipboard: The content will be split into chunks, and the user will be prompted to press Enter before copying each chunk.
+   - A warning will be displayed showing the directory structure of included files like this:
+     ```
+     src/
+     ├── components/
+     │   ├── Button.tsx
+     │   └── Input.tsx
+     ├── pages/
+     │   ├── index.tsx
+     │   └── about.tsx
+     └── utils/
+         └── helpers.ts
+     ```
+   - Suggestions will be provided for managing large outputs:
+     - Creating a cpai.config.json file to customize inclusion/exclusion
+     - Using the -x/--exclude option to exclude specific paths (e.g., cpai -x tests/ docs/)
+     - Being more specific about which directories to process
+   - When writing to file: The content will be written as a single file with chunk separators
+   - When copying to clipboard: The content will be split into chunks, and the user will be prompted to press Enter before copying each chunk
 4. Copy the string (or chunks) to the clipboard (on macOS, using pbcopy).
 
 The output format is:
