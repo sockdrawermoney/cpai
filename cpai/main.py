@@ -121,6 +121,12 @@ def get_files(dir, config, include_all=False, include_configs=False):
     files = []
     ignore_patterns = [] if include_all else get_ignore_patterns()
     
+    # Ensure exclude patterns is a list
+    exclude_patterns = config.get('exclude', [])
+    if not isinstance(exclude_patterns, list):
+        exclude_patterns = []
+        logging.warning("Invalid exclude patterns in config, using empty list")
+    
     for root, _, filenames in os.walk(dir):
         for filename in filenames:
             full_path = os.path.join(root, filename)
@@ -128,7 +134,7 @@ def get_files(dir, config, include_all=False, include_configs=False):
             
             # Skip excluded patterns unless --all is specified
             if not include_all:
-                if any(exclude in rel_path for exclude in config['exclude']) or should_ignore(rel_path, ignore_patterns):
+                if any(fnmatch.fnmatch(rel_path, pattern) for pattern in exclude_patterns) or should_ignore(rel_path, ignore_patterns):
                     continue
                     
             # Handle config files
@@ -166,14 +172,23 @@ def chunk_content(content, chunk_size, files):
     chunks = textwrap.wrap(content, chunk_size, break_long_words=False, replace_whitespace=False)
     
     if len(chunks) > 1:
-        # Generate tree structure of included files
-        tree = format_tree(files)
-        
+        if not files:
+            logging.warning("No files to display in tree structure")
+            tree = "(no files)"
+        else:
+            tree = format_tree(files)
+            
         print("\nWarning: Content exceeds chunk size and will be split into multiple chunks.")
         print("\nIncluded files:")
         print(tree)
         print("\nTo reduce content size, you can:")
         print("1. Create a cpai.config.json file to customize inclusion/exclusion")
+        print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
+        print("3. Be more specific about which directories to process")
+        print("\nPress Enter to continue...")
+        input()
+    
+    return chunks
         print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
         print("3. Be more specific about which directories to process")
         print("\nPress Enter to continue...")
@@ -213,26 +228,40 @@ def write_output(content, config):
     if output_file:
         if isinstance(output_file, bool):
             output_file = 'output-cpai.md'
-        with open(output_file, 'w') as f:
-            f.write(content)
-        logging.info(f"Output written to {output_file}")
+        try:
+            with open(output_file, 'w') as f:
+                f.write(content)
+            logging.info(f"Output written to {output_file}")
+        except IOError as e:
+            logging.error(f"Failed to write to file {output_file}: {e}")
 
     if config['usePastebin']:
-        chunks = chunk_content(content, config['chunkSize'], []).split("\n\n\n\n\n------ ")
+        chunks = chunk_content(content, config['chunkSize'], config.get('files', []))
+        total_chunks = len(chunks)
         for i, chunk in enumerate(chunks, 1):
             if i > 1:
                 chunk = "------ " + chunk
             try:
                 subprocess.run(['pbcopy'], input=chunk.encode('utf-8'), check=True)
-                logging.info(f"Part {i} of {len(chunks)} copied to clipboard")
-                if i < len(chunks):
+                logging.info(f"Part {i} of {total_chunks} copied to clipboard")
+                if i < total_chunks:
                     input("Press Enter when ready for the next part...")
             except subprocess.CalledProcessError:
                 logging.error("Failed to copy to clipboard")
+            except UnicodeEncodeError:
+                logging.error("Failed to encode content for clipboard")
 
 def cpai(args, cli_options):
     logging.debug("Starting cpai function")
     config = read_config()
+    
+    # Handle additional exclude patterns from command line
+    exclude_patterns = cli_options.get('exclude', [])
+    if exclude_patterns:
+        if not isinstance(config['exclude'], list):
+            config['exclude'] = []
+        config['exclude'].extend(exclude_patterns)
+    
     config.update(cli_options)
 
     files = []
@@ -242,20 +271,26 @@ def cpai(args, cli_options):
                 files.extend(get_files(arg, config, 
                                     include_all=cli_options.get('include_all', False),
                                     include_configs=cli_options.get('include_configs', False)))
-            else:
+            elif os.path.isfile(arg):  # Validate file exists
                 files.append(arg)
+            else:
+                logging.warning(f"Skipping '{arg}': not found")
     else:
         files = get_files('.', config,
                          include_all=cli_options.get('include_all', False),
                          include_configs=cli_options.get('include_configs', False))
 
+    if not files:
+        logging.warning("No files found to process")
+        return
+
+    config['files'] = files
     content = format_content(files)
-    chunked_content = chunk_content(content, config['chunkSize'], files)
 
     if len(content) > config['chunkSize']:
         logging.warning(f"Output size ({len(content)} characters) exceeds the chunk size ({config['chunkSize']} characters). It will be split into multiple parts.")
 
-    write_output(chunked_content, config)
+    write_output(content, config)
 
 def main():
     parser = argparse.ArgumentParser(description="Concatenate multiple files into a single markdown text string")
@@ -275,7 +310,8 @@ def main():
         'outputFile': args.file if args.file is not None else False,
         'usePastebin': not args.noclipboard,
         'include_all': args.all,
-        'include_configs': args.configs
+        'include_configs': args.configs,
+        'exclude': args.exclude
     }
 
     logging.debug("Starting main function")
