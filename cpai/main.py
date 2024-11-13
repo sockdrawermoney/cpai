@@ -6,6 +6,7 @@ import subprocess
 import textwrap
 import logging
 import fnmatch
+import tempfile
 
 # Function to configure logging
 def configure_logging(debug):
@@ -31,7 +32,15 @@ DEFAULT_EXCLUDE_PATTERNS = [
     ".idea/", ".vscode/", ".DS_Store",
     
     # Misc
-    ".git/", "*.log"
+    ".git/", "*.log",
+    
+    # Dotfiles and dotfolders (be more specific)
+    ".env",
+    ".envrc",
+    ".env.*",
+    ".python-version",
+    ".ruby-version",
+    ".node-version"
 ]
 
 CONFIG_PATTERNS = [
@@ -60,7 +69,7 @@ def read_config():
     logging.debug("Reading configuration")
     default_config = {
         "include": ["."],
-        "exclude": DEFAULT_EXCLUDE_PATTERNS,
+        "exclude": DEFAULT_EXCLUDE_PATTERNS.copy(),
         "outputFile": False,
         "usePastebin": True,
         "fileExtensions": [
@@ -74,13 +83,29 @@ def read_config():
     try:
         with open('cpai.config.json', 'r') as f:
             config = json.load(f)
-            if isinstance(config.get('outputFile'), bool) or isinstance(config.get('outputFile'), str):
+            
+            # Validate exclude patterns
+            if 'exclude' in config:
+                if not isinstance(config['exclude'], list):
+                    logging.warning("Invalid 'exclude' in config. Using default.")
+                    config.pop('exclude')
+                else:
+                    # Ensure all patterns are strings
+                    config['exclude'] = [str(pattern) for pattern in config['exclude']]
+            
+            # Validate other fields and update config
+            if isinstance(config.get('outputFile'), (bool, str)):
                 default_config.update(config)
             else:
                 logging.warning("Invalid 'outputFile' in config. Using default.")
+            
             # Ensure chunkSize is an integer
-            if 'chunkSize' in config and isinstance(config['chunkSize'], int):
-                default_config['chunkSize'] = config['chunkSize']
+            if 'chunkSize' in config:
+                if isinstance(config['chunkSize'], int):
+                    default_config['chunkSize'] = config['chunkSize']
+                else:
+                    logging.warning("Invalid 'chunkSize' in config. Using default.")
+            
             return default_config
     except FileNotFoundError:
         logging.debug("Configuration file not found. Using default configuration.")
@@ -93,16 +118,28 @@ def parse_gitignore(gitignore_path):
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
-                    ignore_patterns.append(line)
+                    # Convert .gitignore pattern to fnmatch pattern
+                    if line.endswith('/'):
+                        # Directory pattern - make it recursive
+                        pattern = f"**/{line}**"
+                    else:
+                        # File pattern - allow matching in any directory
+                        pattern = f"**/{line}"
+                    ignore_patterns.append(pattern)
     except FileNotFoundError:
         pass
     return ignore_patterns
 
 def should_ignore(file_path, ignore_patterns):
+    should_exclude = False
     for pattern in ignore_patterns:
-        if fnmatch.fnmatch(file_path, pattern):
-            return True
-    return False
+        if pattern.startswith('!'):
+            # If this is a negation pattern and the file matches, we explicitly don't ignore it
+            if fnmatch.fnmatch(file_path, pattern[1:]):
+                return False
+        elif fnmatch.fnmatch(file_path, pattern):
+            should_exclude = True
+    return should_exclude
 
 def get_ignore_patterns():
     ignore_patterns = []
@@ -119,34 +156,74 @@ def get_ignore_patterns():
 def get_files(dir, config, include_all=False, include_configs=False):
     logging.debug(f"Getting files from directory: {dir}")
     files = []
-    ignore_patterns = [] if include_all else get_ignore_patterns()
     
-    # Ensure exclude patterns is a list
-    exclude_patterns = config.get('exclude', [])
+    exclude_patterns = config.get('exclude', DEFAULT_EXCLUDE_PATTERNS.copy())
     if not isinstance(exclude_patterns, list):
-        exclude_patterns = []
-        logging.warning("Invalid exclude patterns in config, using empty list")
+        exclude_patterns = DEFAULT_EXCLUDE_PATTERNS.copy()
     
-    for root, _, filenames in os.walk(dir):
-        for filename in filenames:
-            full_path = os.path.join(root, filename)
-            rel_path = os.path.relpath(full_path, start=os.getcwd())
+    if not include_all:
+        ignore_patterns = get_ignore_patterns()
+        logging.debug(f"Gitignore patterns: {ignore_patterns}")
+        exclude_patterns.extend(ignore_patterns)
+    
+    include_patterns = config.get('include', ['.'])
+    if not isinstance(include_patterns, list):
+        include_patterns = ['.']
+    
+    logging.debug(f"Include patterns: {include_patterns}")
+    logging.debug(f"Final exclude patterns: {exclude_patterns}")
+    
+    for root, dirs, filenames in os.walk(dir, topdown=True):
+        rel_root = os.path.relpath(root, start=os.getcwd())
+        
+        # Skip this directory and all subdirectories if it matches exclude patterns
+        if any(fnmatch.fnmatch(rel_root + '/', pattern) for pattern in exclude_patterns):
+            logging.debug(f"Skipping directory and all subdirectories: {rel_root}")
+            dirs[:] = []  # Clear the dirs list to prevent further traversal
+            continue
             
-            # Skip excluded patterns unless --all is specified
-            if not include_all:
-                if any(fnmatch.fnmatch(rel_path, pattern) for pattern in exclude_patterns) or should_ignore(rel_path, ignore_patterns):
-                    continue
+        # Filter out directories to skip before processing
+        original_dirs = dirs.copy()
+        dirs[:] = [d for d in dirs if not any(
+            fnmatch.fnmatch(os.path.join(rel_root, d) + '/', pattern)
+            for pattern in exclude_patterns
+        )]
+        
+        if len(dirs) != len(original_dirs):
+            logging.debug(f"Skipped directories: {set(original_dirs) - set(dirs)}")
+        
+        # If include pattern is ".", include everything unless excluded
+        # Otherwise, check if directory matches include patterns
+        if "." not in include_patterns and not any(
+            fnmatch.fnmatch(rel_root, pattern) or 
+            fnmatch.fnmatch(f"{rel_root}/", pattern)
+            for pattern in include_patterns
+        ):
+            logging.debug(f"Skipping directory {rel_root} - doesn't match include patterns")
+            continue
+            
+        for filename in filenames:
+            rel_path = os.path.join(rel_root, filename)
+            
+            # Skip excluded files
+            if not include_all and any(fnmatch.fnmatch(rel_path, pattern) for pattern in exclude_patterns):
+                logging.debug(f"Skipping file {rel_path} - matches exclude pattern")
+                continue
                     
             # Handle config files
             is_config = any(fnmatch.fnmatch(filename, pattern) for pattern in CONFIG_PATTERNS)
             if is_config and not (include_configs or include_all):
+                logging.debug(f"Skipping config file {rel_path}")
                 continue
                 
             # Check file extensions
             if os.path.splitext(filename)[1] in config['fileExtensions']:
                 files.append(rel_path)
-                
-    logging.debug(f"Found files: {files}")
+                logging.debug(f"Added file: {rel_path}")
+            else:
+                logging.debug(f"Skipping file {rel_path} - extension not in allowed list")
+    
+    logging.debug(f"Total files found: {len(files)}")
     return files
 
 def format_content(files):
@@ -167,35 +244,6 @@ def format_content(files):
         output += f"\n## {file}\n```{extension}\n{content}\n```\n"
     return output
 
-def chunk_content(content, chunk_size, files):
-    logging.debug(f"Chunking content with chunk size: {chunk_size}")
-    chunks = textwrap.wrap(content, chunk_size, break_long_words=False, replace_whitespace=False)
-    
-    if len(chunks) > 1:
-        if not files:
-            logging.warning("No files to display in tree structure")
-            tree = "(no files)"
-        else:
-            tree = format_tree(files)
-            
-        print("\nWarning: Content exceeds chunk size and will be split into multiple chunks.")
-        print("\nIncluded files:")
-        print(tree)
-        print("\nTo reduce content size, you can:")
-        print("1. Create a cpai.config.json file to customize inclusion/exclusion")
-        print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
-        print("3. Be more specific about which directories to process")
-        print("\nPress Enter to continue...")
-        input()
-    
-    return chunks
-        print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
-        print("3. Be more specific about which directories to process")
-        print("\nPress Enter to continue...")
-        input()
-    
-    return chunks
-
 def format_tree(files):
     """Format files into a tree structure for display"""
     tree = {}
@@ -213,17 +261,56 @@ def format_tree(files):
 def format_tree_string(tree, prefix=""):
     """Convert tree dictionary to string representation"""
     result = []
-    items = list(tree.items())
+    items = sorted(tree.items())
+    logging.debug(f"Processing tree items: {items}")
+    
     for i, (name, subtree) in enumerate(items):
         is_last = i == len(items) - 1
-        result.append(prefix + ("└── " if is_last else "├── ") + name)
+        line = f"{prefix}{'└── ' if is_last else '├── '}{name}"
+        logging.debug(f"Adding line: {repr(line)}")  # Use repr to see exact string content
+        result.append(line)
+        
         if subtree is not None:
-            extension = "    " if is_last else "│   "
-            result.extend(format_tree_string(subtree, prefix + extension))
-    return "\n".join(result)
+            next_prefix = prefix + ('    ' if is_last else '│   ')
+            logging.debug(f"Processing subtree for {name} with prefix: {repr(next_prefix)}")
+            subtree_result = format_tree_string(subtree, next_prefix)
+            if isinstance(subtree_result, list):
+                result.extend(subtree_result)
+            else:
+                result.extend(subtree_result.split('\n'))
+    
+    final_result = '\n'.join(result)
+    logging.debug(f"Returning result: {repr(final_result)}")
+    return final_result
 
 def write_output(content, config):
     logging.debug("Writing output")
+    content_size = len(content)
+    chunk_size = config['chunkSize']
+    
+    # Check content size and warn if too large
+    if content_size > chunk_size:
+        if not config.get('files'):
+            logging.warning("No files to display in tree structure")
+            tree = "(no files)"
+        else:
+            tree = format_tree(config['files'])
+            logging.debug(f"Generated tree structure: {repr(tree)}")
+            
+        print(f"\nWarning: Content size ({content_size} characters) exceeds the maximum size ({chunk_size} characters).")
+        print("\nIncluded files:")
+        print(tree)
+        print("\nTo reduce content size, you can:")
+        print("1. Create a cpai.config.json file to customize inclusion/exclusion")
+        print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
+        print("3. Be more specific about which directories to process")
+        
+        # Only proceed with file output if requested
+        if not config['outputFile']:
+            print("\nContent too large for clipboard. Use -f to write to file instead.")
+            return
+
+    # Handle file output
     output_file = config['outputFile']
     if output_file:
         if isinstance(output_file, bool):
@@ -235,26 +322,18 @@ def write_output(content, config):
         except IOError as e:
             logging.error(f"Failed to write to file {output_file}: {e}")
 
-    if config['usePastebin']:
-        chunks = chunk_content(content, config['chunkSize'], config.get('files', []))
-        total_chunks = len(chunks)
-        for i, chunk in enumerate(chunks, 1):
-            if i > 1:
-                chunk = "------ " + chunk
-            try:
-                subprocess.run(['pbcopy'], input=chunk.encode('utf-8'), check=True)
-                logging.info(f"Part {i} of {total_chunks} copied to clipboard")
-                if i < total_chunks:
-                    input("Press Enter when ready for the next part...")
-            except subprocess.CalledProcessError:
+    # Handle clipboard output only if content is within size limit
+    if config['usePastebin'] and content_size <= chunk_size:
+        try:
+            # Use pbcopy directly without shell=True or pipes
+            process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
+            process.communicate(content.encode('utf-8'))
+            if process.returncode == 0:
+                logging.info("Content copied to clipboard")
+            else:
                 logging.error("Failed to copy to clipboard")
-            except UnicodeEncodeError:
-                logging.error("Failed to encode content for clipboard")
-                    input("Press Enter when ready for the next part...")
-            except subprocess.CalledProcessError:
-                logging.error("Failed to copy to clipboard")
-            except UnicodeEncodeError:
-                logging.error("Failed to encode content for clipboard")
+        except (subprocess.CalledProcessError, UnicodeEncodeError) as e:
+            logging.error(f"Failed to copy to clipboard: {e}")
 
 def cpai(args, cli_options):
     logging.debug("Starting cpai function")
@@ -264,7 +343,7 @@ def cpai(args, cli_options):
     exclude_patterns = cli_options.get('exclude', [])
     if exclude_patterns:
         if not isinstance(config['exclude'], list):
-            config['exclude'] = []
+            config['exclude'] = DEFAULT_EXCLUDE_PATTERNS.copy()
         config['exclude'].extend(exclude_patterns)
     
     config.update(cli_options)
@@ -291,9 +370,6 @@ def cpai(args, cli_options):
 
     config['files'] = files
     content = format_content(files)
-
-    if len(content) > config['chunkSize']:
-        logging.warning(f"Output size ({len(content)} characters) exceeds the chunk size ({config['chunkSize']} characters). It will be split into multiple parts.")
 
     write_output(content, config)
 
