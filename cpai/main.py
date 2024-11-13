@@ -250,6 +250,11 @@ def write_output(content, config):
                 logging.error("Failed to copy to clipboard")
             except UnicodeEncodeError:
                 logging.error("Failed to encode content for clipboard")
+                    input("Press Enter when ready for the next part...")
+            except subprocess.CalledProcessError:
+                logging.error("Failed to copy to clipboard")
+            except UnicodeEncodeError:
+                logging.error("Failed to encode content for clipboard")
 
 def cpai(args, cli_options):
     logging.debug("Starting cpai function")
