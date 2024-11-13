@@ -19,19 +19,24 @@ cpai [options] [file|directory...]
 Options:
 - `-f [FILENAME], --file [FILENAME]`: Output to file. If FILENAME is not provided, defaults to 'output-cpai.md'.
 - `-n, --noclipboard`: Don't copy to clipboard.
+- `-a, --all`: Include all files (including tests, configs, etc.).
+- `-c, --configs`: Include configuration files.
 
 If no files or directories are specified, cpai will process all supported files in the current directory.
 
 Examples:
 ```
-# Process all files in the current directory, copy to clipboard only
-cpai
+# Process only core source files (default behavior)
+cpai src/
+
+# Process all files including tests and configs
+cpai src/ -a
+
+# Process core source files and include configs
+cpai src/ -c
 
 # Process specific files, copy to clipboard only
 cpai file1.py file2.js
-
-# Process all files in the src and tests directories, copy to clipboard only
-cpai src tests
 
 # Output to file (output-cpai.md) and clipboard
 cpai -f
@@ -48,16 +53,42 @@ cpai -f -n
 
 ## Configuration
 
-You can create a `cpai.config.json` file in your project root to customize behavior:
+You can create a `cpai.config.json` file in your project root to customize behavior. By default, cpai will:
+1. Include only core source files (excluding tests, configs, build files, etc.)
+2. Look for source files in common directories (src/, app/, pages/, components/, lib/)
+3. Support common file extensions for JavaScript/TypeScript, Python, and Solidity projects
+
+Here are the default settings that cpai starts with (you can override these in your cpai.config.json):
 
 ```json
 {
-  "include": ["src", "tests"],
-  "exclude": ["node_modules", "dist"],
+  "include": ["src", "lib"],
+  "exclude": [
+    "build/", "dist/", "__pycache__/", ".cache/", "coverage/", ".next/",
+    "out/", ".nuxt/", ".output/", "*.egg-info/",
+    "node_modules/", "venv/", ".env/", "virtualenv/",
+    "test/", "tests/", "__tests__/", "**/*.test.*", "**/*.spec.*",
+    ".idea/", ".vscode/", ".DS_Store",
+    ".git/", "*.log"
+  ],
   "outputFile": false,
   "usePastebin": true,
-  "fileExtensions": [".py", ".js", ".ts", ".tsx"],
+  "fileExtensions": [
+    ".ts", ".js", ".py", ".rs", ".sol", ".go", ".jsx", ".tsx",
+    ".css", ".scss", ".svelte", ".html", ".java", ".c", ".cpp",
+    ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh",
+    ".bash", ".md", ".json", ".yaml", ".yml", ".toml"
+  ],
   "chunkSize": 90000
+}
+```
+
+You can create your own cpai.config.json to override any of these defaults. For example, to only include Python files from a specific directory:
+
+```json
+{
+  "include": ["my_project/src"],
+  "fileExtensions": [".py"]
 }
 ```
 

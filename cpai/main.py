@@ -16,11 +16,51 @@ def configure_logging(debug):
 
 DEFAULT_CHUNK_SIZE = 90000
 
+DEFAULT_EXCLUDE_PATTERNS = [
+    # Build and cache
+    "build/", "dist/", "__pycache__/", ".cache/", "coverage/", ".next/", 
+    "out/", ".nuxt/", ".output/", "*.egg-info/",
+    
+    # Dependencies
+    "node_modules/", "venv/", ".env/", "virtualenv/",
+    
+    # Test files
+    "test/", "tests/", "__tests__/", "**/*.test.*", "**/*.spec.*",
+    
+    # IDE and OS
+    ".idea/", ".vscode/", ".DS_Store",
+    
+    # Misc
+    ".git/", "*.log"
+]
+
+CONFIG_PATTERNS = [
+    "*.config.json", "package.json", "tsconfig.json", "*.config.js",
+    "*.config.ts", "pyproject.toml", "setup.py", "setup.cfg",
+    "requirements.txt", "Pipfile", "Pipfile.lock"
+]
+
+CORE_SOURCE_PATTERNS = {
+    # JavaScript/TypeScript/React
+    "src/": ["*.js", "*.jsx", "*.ts", "*.tsx"],
+    "app/": ["*.js", "*.jsx", "*.ts", "*.tsx"],
+    "pages/": ["*.js", "*.jsx", "*.ts", "*.tsx"],
+    "components/": ["*.js", "*.jsx", "*.ts", "*.tsx"],
+    "lib/": ["*.js", "*.jsx", "*.ts", "*.tsx"],
+    
+    # Python
+    "src/": ["*.py"],
+    
+    # Solidity
+    "contracts/": ["*.sol"],
+    "interfaces/": ["*.sol"]
+}
+
 def read_config():
     logging.debug("Reading configuration")
     default_config = {
         "include": ["."],
-        "exclude": ["node_modules", "dist"],
+        "exclude": DEFAULT_EXCLUDE_PATTERNS,
         "outputFile": False,
         "usePastebin": True,
         "fileExtensions": [
@@ -76,18 +116,30 @@ def get_ignore_patterns():
         current_dir = parent_dir
     return ignore_patterns
 
-def get_files(dir, config):
+def get_files(dir, config, include_all=False, include_configs=False):
     logging.debug(f"Getting files from directory: {dir}")
     files = []
-    ignore_patterns = get_ignore_patterns()
+    ignore_patterns = [] if include_all else get_ignore_patterns()
+    
     for root, _, filenames in os.walk(dir):
         for filename in filenames:
             full_path = os.path.join(root, filename)
             rel_path = os.path.relpath(full_path, start=os.getcwd())
-            if any(exclude in rel_path for exclude in config['exclude']) or should_ignore(rel_path, ignore_patterns):
+            
+            # Skip excluded patterns unless --all is specified
+            if not include_all:
+                if any(exclude in rel_path for exclude in config['exclude']) or should_ignore(rel_path, ignore_patterns):
+                    continue
+                    
+            # Handle config files
+            is_config = any(fnmatch.fnmatch(filename, pattern) for pattern in CONFIG_PATTERNS)
+            if is_config and not (include_configs or include_all):
                 continue
+                
+            # Check file extensions
             if os.path.splitext(filename)[1] in config['fileExtensions']:
                 files.append(rel_path)
+                
     logging.debug(f"Found files: {files}")
     return files
 
@@ -156,11 +208,15 @@ def cpai(args, cli_options):
     if args:
         for arg in args:
             if os.path.isdir(arg):
-                files.extend(get_files(arg, config))
+                files.extend(get_files(arg, config, 
+                                    include_all=cli_options.get('include_all', False),
+                                    include_configs=cli_options.get('include_configs', False)))
             else:
                 files.append(arg)
     else:
-        files = get_files('.', config)
+        files = get_files('.', config,
+                         include_all=cli_options.get('include_all', False),
+                         include_configs=cli_options.get('include_configs', False))
 
     content = format_content(files)
     chunked_content = chunk_content(content, config['chunkSize'])
@@ -175,6 +231,8 @@ def main():
     parser.add_argument('files', nargs='*', help="Files or directories to process")
     parser.add_argument('-f', '--file', nargs='?', const=True, help="Output to file. Optionally specify filename.")
     parser.add_argument('-n', '--noclipboard', action='store_true', help="Don't copy to clipboard")
+    parser.add_argument('-a', '--all', action='store_true', help="Include all files (including tests, configs, etc.)")
+    parser.add_argument('-c', '--configs', action='store_true', help="Include configuration files")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
     args = parser.parse_args()
 
@@ -183,7 +241,9 @@ def main():
 
     cli_options = {
         'outputFile': args.file if args.file is not None else False,
-        'usePastebin': not args.noclipboard
+        'usePastebin': not args.noclipboard,
+        'include_all': args.all,
+        'include_configs': args.configs
     }
 
     logging.debug("Starting main function")

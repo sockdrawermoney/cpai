@@ -1,8 +1,20 @@
 {
   "include": ["."],
-  "exclude": ["node_modules", "dist"],
+  "exclude": [
+    "build/", "dist/", "__pycache__/", ".cache/", "coverage/", ".next/",
+    "out/", ".nuxt/", ".output/", "*.egg-info/",
+    "node_modules/", "venv/", ".env/", "virtualenv/",
+    "test/", "tests/", "__tests__/", "**/*.test.*", "**/*.spec.*",
+    ".idea/", ".vscode/", ".DS_Store",
+    ".git/", "*.log"
+  ],
   "outputFile": false,
   "usePastebin": true,
-  "fileExtensions": [".py", ".js", ".ts", ".tsx"],
+  "fileExtensions": [
+    ".ts", ".js", ".py", ".rs", ".sol", ".go", ".jsx", ".tsx",
+    ".css", ".scss", ".svelte", ".html", ".java", ".c", ".cpp",
+    ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh",
+    ".bash", ".md", ".json", ".yaml", ".yml", ".toml"
+  ],
   "chunkSize": 90000
 }
