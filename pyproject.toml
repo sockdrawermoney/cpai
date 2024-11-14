@@ -1,0 +1,8 @@
+[tool.pytest]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "--cov=cpai --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["cpai"]
+omit = ["tests/*"] 
