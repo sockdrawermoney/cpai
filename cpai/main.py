@@ -359,9 +359,14 @@ def write_output(content, config):
             if process.returncode == 0:
                 logging.info("Content copied to clipboard")
             else:
-                logging.error("Failed to copy to clipboard")
-        except (subprocess.CalledProcessError, UnicodeEncodeError) as e:
-            logging.error(f"Failed to copy to clipboard: {e}")
+                logging.error(f"Failed to copy to clipboard: Command returned non-zero exit status {process.returncode}")
+        except UnicodeEncodeError as e:
+            # Pass through the full error message
+            logging.error(f"Failed to copy to clipboard: {str(e)}")
+        except subprocess.CalledProcessError as e:
+            # Remove the trailing period from the error message
+            error_msg = str(e).rstrip('.')
+            logging.error(f"Failed to copy to clipboard: {error_msg}")
 
 def cpai(args, cli_options):
     logging.debug("Starting cpai function")
@@ -410,23 +415,25 @@ def main():
     parser.add_argument('-c', '--configs', action='store_true', help="Include configuration files")
     parser.add_argument('-x', '--exclude', nargs='+', help="Additional patterns to exclude")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
-    args = parser.parse_args()
-
-    # Configure logging based on the --debug flag
-    configure_logging(args.debug)
-
-    cli_options = {
-        'outputFile': args.file if args.file is not None else False,
-        'usePastebin': not args.noclipboard,
-        'include_all': args.all,
-        'include_configs': args.configs,
-        'exclude': args.exclude
-    }
-
-    logging.debug("Starting main function")
 
     try:
+        args = parser.parse_args()
+        configure_logging(args.debug)
+
+        cli_options = {
+            'outputFile': args.file if args.file is not None else False,
+            'usePastebin': not args.noclipboard,
+            'include_all': args.all,
+            'include_configs': args.configs,
+            'exclude': args.exclude
+        }
+
+        logging.debug("Starting main function")
         cpai(args.files, cli_options)
+    except (KeyboardInterrupt, SystemExit):
+        # Handle both KeyboardInterrupt and SystemExit
+        logging.error("Operation cancelled by user")
+        sys.exit(1)
     except Exception as e:
         logging.error(f"An error occurred: {e}", exc_info=True)
         sys.exit(1)

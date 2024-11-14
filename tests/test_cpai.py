@@ -349,5 +349,194 @@ class TestCPAI(unittest.TestCase):
         self.assertEqual(config['chunkSize'], DEFAULT_CHUNK_SIZE)  # Should use default
         self.assertFalse(config['outputFile'])  # Should use default
 
+    def test_main_module_execution(self):
+        """Test direct module execution through __main__.py"""
+        with patch('sys.argv', ['cpai']):
+            with patch('cpai.main.main') as mock_main:
+                # Import and execute __main__.py directly
+                import runpy
+                runpy.run_module('cpai.__main__', run_name='__main__', alter_sys=True)
+                mock_main.assert_called_once()
+
+    def test_clipboard_error_handling(self):
+        """Test clipboard operations with errors"""
+        config = {
+            'outputFile': False,
+            'usePastebin': True,
+            'chunkSize': 1000,
+            'files': ['test.py']
+        }
+        content = "Test content"
+        
+        # Test subprocess error
+        with patch('subprocess.Popen') as mock_popen:
+            mock_process = MagicMock()
+            mock_process.returncode = 1
+            mock_popen.return_value = mock_process
+            
+            with patch('logging.error') as mock_error:
+                write_output(content, config)
+                mock_error.assert_called_with(
+                    "Failed to copy to clipboard: Command returned non-zero exit status 1"
+                )
+
+        # Test encoding error
+        with patch('subprocess.Popen') as mock_popen:
+            mock_popen.side_effect = UnicodeEncodeError('utf-8', 'test', 0, 1, 'test error')
+            with patch('logging.error') as mock_error:
+                write_output(content, config)
+                mock_error.assert_called_with(
+                    "Failed to copy to clipboard: 'utf-8' codec can't encode character '\\x74' in position 0: test error"
+                )
+
+    def test_main_module_direct_execution(self):
+        """Test direct execution through __main__.py"""
+        with patch('sys.argv', ['cpai']):
+            with patch('cpai.main.main') as mock_main:
+                # Import and execute __main__.py
+                import runpy
+                runpy.run_module('cpai.__main__', run_name='__main__')
+                mock_main.assert_called_once()
+
+    def test_format_tree_with_empty_subtree(self):
+        """Test tree formatting with empty subtree"""
+        files = [
+            'src/empty/',
+            'src/file.py'
+        ]
+        tree = format_tree(files)
+        self.assertIn('src', tree)
+        self.assertIn('empty', tree)
+        self.assertIn('file.py', tree)
+
+    def test_get_files_with_broken_symlinks(self):
+        """Test file collection with broken symlinks"""
+        # Create a broken symlink
+        os.symlink('nonexistent.py', 'broken_link.py')
+        
+        config = {
+            'include': ['.'],
+            'exclude': [],
+            'fileExtensions': ['.py']
+        }
+        
+        try:
+            files = get_files('.', config)
+            self.assertNotIn('broken_link.py', files)
+        finally:
+            os.unlink('broken_link.py')
+
+    def test_write_output_with_unicode_error(self):
+        """Test clipboard operations with Unicode errors"""
+        config = {
+            'outputFile': False,
+            'usePastebin': True,
+            'chunkSize': 1000,
+            'files': ['test.py']
+        }
+
+        # Create content with problematic Unicode
+        content = "Test content with unicode \udcff"
+
+        with patch('subprocess.Popen') as mock_popen:
+            mock_process = MagicMock()
+            mock_process.communicate.side_effect = UnicodeEncodeError(
+                'utf-8', content, 26, 27, 'surrogates not allowed'
+            )
+            mock_popen.return_value = mock_process
+
+            with patch('logging.error') as mock_error:
+                write_output(content, config)
+                mock_error.assert_called_with(
+                    "Failed to copy to clipboard: 'utf-8' codec can't encode character '\\udcff' in position 26: surrogates not allowed"
+                )
+
+    def test_format_tree_with_special_characters(self):
+        """Test tree formatting with special characters in paths"""
+        files = [
+            'src/special!@#$/file.py',
+            'src/unicode⚡/test.py'
+        ]
+        tree = format_tree(files)
+        self.assertIn('special!@#$', tree)
+        self.assertIn('unicode⚡', tree)
+
+    def test_main_with_keyboard_interrupt(self):
+        """Test main function handling KeyboardInterrupt"""
+        mock_args = MagicMock()
+        mock_args.debug = False
+        mock_args.file = None
+        mock_args.noclipboard = False
+        mock_args.all = False
+        mock_args.configs = False
+        mock_args.exclude = None
+        mock_args.files = []
+
+        with patch('argparse.ArgumentParser.parse_args', return_value=mock_args):
+            with patch('cpai.main.cpai', side_effect=KeyboardInterrupt):
+                with patch('sys.exit') as mock_exit:
+                    with patch('logging.error') as mock_error:
+                        main()
+                        mock_exit.assert_called_once_with(1)
+                        mock_error.assert_called_once()
+
+    def test_get_files_with_permission_error(self):
+        """Test file collection with permission errors"""
+        # Create a directory with no read permissions
+        os.makedirs('no_access')
+        os.chmod('no_access', 0o000)
+        
+        config = {
+            'include': ['.'],
+            'exclude': [],
+            'fileExtensions': ['.py']
+        }
+        
+        try:
+            files = get_files('.', config)
+            self.assertNotIn('no_access/test.py', files)
+        finally:
+            os.rmdir('no_access')
+
+    def test_write_output_clipboard_errors(self):
+        """Test clipboard operations with various errors"""
+        config = {
+            'outputFile': False,
+            'usePastebin': True,
+            'chunkSize': 1000,
+            'files': ['test.py']
+        }
+        content = "Test content"
+
+        # Test non-zero return code
+        with patch('subprocess.Popen') as mock_popen:
+            mock_process = MagicMock()
+            mock_process.returncode = 1
+            mock_popen.return_value = mock_process
+            
+            with patch('logging.error') as mock_error:
+                write_output(content, config)
+                mock_error.assert_called_with(
+                    "Failed to copy to clipboard: Command returned non-zero exit status 1"
+                )
+
+        # Test subprocess error
+        with patch('subprocess.Popen') as mock_popen:
+            mock_popen.side_effect = subprocess.CalledProcessError(1, 'pbcopy')
+            with patch('logging.error') as mock_error:
+                write_output(content, config)
+                mock_error.assert_called_with(
+                    "Failed to copy to clipboard: Command 'pbcopy' returned non-zero exit status 1"
+                )
+
+        # Test encoding error
+        with patch('subprocess.Popen') as mock_popen:
+            mock_popen.side_effect = UnicodeEncodeError('utf-8', 'test', 0, 1, 'test error')
+            with patch('logging.error') as mock_error:
+                write_output(content, config)
+                mock_error.assert_called_with(
+                    "Failed to copy to clipboard: 'utf-8' codec can't encode character '\\x74' in position 0: test error"
+                )
+
 if __name__ == '__main__':
     unittest.main()
