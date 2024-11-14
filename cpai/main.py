@@ -31,10 +31,13 @@ DEFAULT_EXCLUDE_PATTERNS = [
     # IDE and OS
     ".idea/", ".vscode/", ".DS_Store",
     
-    # Misc
-    ".git/", "*.log",
+    # Package files
+    "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     
-    # Dotfiles and dotfolders (be more specific)
+    # Misc
+    ".git/", "*.log", "*.md",
+    
+    # Dotfiles and dotfolders
     ".env",
     ".envrc",
     ".env.*",
@@ -75,14 +78,17 @@ def read_config():
         "fileExtensions": [
             ".ts", ".js", ".py", ".rs", ".sol", ".go", ".jsx", ".tsx", 
             ".css", ".scss", ".svelte", ".html", ".java", ".c", ".cpp", 
-            ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh", 
-            ".bash", ".md", ".json", ".yaml", ".yml", ".toml"
+            ".h", ".hpp", ".rb", ".php", ".swift", ".kt", ".scala", ".sh"
         ],
         "chunkSize": DEFAULT_CHUNK_SIZE
     }
     try:
         with open('cpai.config.json', 'r') as f:
-            config = json.load(f)
+            try:
+                config = json.load(f)
+            except json.JSONDecodeError:
+                logging.warning("Invalid JSON in config file. Using default configuration.")
+                return default_config
             
             # Validate exclude patterns
             if 'exclude' in config:
@@ -112,33 +118,48 @@ def read_config():
         return default_config
 
 def parse_gitignore(gitignore_path):
+    """Parse gitignore file and convert patterns to fnmatch format"""
     ignore_patterns = []
     try:
         with open(gitignore_path, 'r') as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
-                    # Convert .gitignore pattern to fnmatch pattern
-                    if line.endswith('/'):
-                        # Directory pattern - make it recursive
-                        pattern = f"**/{line}**"
+                    if line.startswith('!'):
+                        # Negation pattern - keep the negation and convert pattern
+                        pattern = line[1:]  # Remove !
+                        if pattern.endswith('/*'):
+                            pattern = pattern[:-2]  # Remove /*
+                        ignore_patterns.append(('!', pattern))
                     else:
-                        # File pattern - allow matching in any directory
-                        pattern = f"**/{line}"
-                    ignore_patterns.append(pattern)
+                        # Standard pattern
+                        pattern = line  # Set pattern to the original line
+                        if line.endswith('/*'):
+                            pattern = line[:-2]  # Remove /*
+                        elif line.endswith('/'):
+                            pattern = line[:-1]  # Remove trailing /
+                        ignore_patterns.append(('', pattern))
     except FileNotFoundError:
         pass
     return ignore_patterns
 
 def should_ignore(file_path, ignore_patterns):
+    """
+    Determine if a file should be ignored based on gitignore patterns.
+    Returns True if file should be ignored, False otherwise.
+    """
     should_exclude = False
-    for pattern in ignore_patterns:
-        if pattern.startswith('!'):
-            # If this is a negation pattern and the file matches, we explicitly don't ignore it
-            if fnmatch.fnmatch(file_path, pattern[1:]):
-                return False
-        elif fnmatch.fnmatch(file_path, pattern):
-            should_exclude = True
+    
+    for pattern_type, pattern in ignore_patterns:
+        if pattern_type == '!':  # Negation pattern
+            if fnmatch.fnmatch(file_path, pattern) or \
+               fnmatch.fnmatch(os.path.dirname(file_path), pattern):
+                return False  # File is explicitly included
+        else:  # Standard pattern
+            if fnmatch.fnmatch(file_path, pattern) or \
+               fnmatch.fnmatch(os.path.dirname(file_path), pattern):
+                should_exclude = True
+    
     return should_exclude
 
 def get_ignore_patterns():
@@ -161,37 +182,39 @@ def get_files(dir, config, include_all=False, include_configs=False):
     if not isinstance(exclude_patterns, list):
         exclude_patterns = DEFAULT_EXCLUDE_PATTERNS.copy()
     
+    # Handle gitignore patterns separately
+    ignore_patterns = []
     if not include_all:
         ignore_patterns = get_ignore_patterns()
         logging.debug(f"Gitignore patterns: {ignore_patterns}")
-        exclude_patterns.extend(ignore_patterns)
     
     include_patterns = config.get('include', ['.'])
     if not isinstance(include_patterns, list):
         include_patterns = ['.']
     
     logging.debug(f"Include patterns: {include_patterns}")
-    logging.debug(f"Final exclude patterns: {exclude_patterns}")
+    logging.debug(f"Exclude patterns: {exclude_patterns}")
     
     for root, dirs, filenames in os.walk(dir, topdown=True):
         rel_root = os.path.relpath(root, start=os.getcwd())
         
-        # Skip this directory and all subdirectories if it matches exclude patterns
-        if any(fnmatch.fnmatch(rel_root + '/', pattern) for pattern in exclude_patterns):
-            logging.debug(f"Skipping directory and all subdirectories: {rel_root}")
-            dirs[:] = []  # Clear the dirs list to prevent further traversal
-            continue
-            
-        # Filter out directories to skip before processing
-        original_dirs = dirs.copy()
+        # Filter directories using exclude patterns
         dirs[:] = [d for d in dirs if not any(
-            fnmatch.fnmatch(os.path.join(rel_root, d) + '/', pattern)
+            d == pattern.rstrip('/') or
+            fnmatch.fnmatch(os.path.join(rel_root, d) + '/', pattern) or
+            fnmatch.fnmatch(os.path.join(rel_root, d), pattern.rstrip('/'))
             for pattern in exclude_patterns
         )]
         
-        if len(dirs) != len(original_dirs):
-            logging.debug(f"Skipped directories: {set(original_dirs) - set(dirs)}")
-        
+        # Skip this directory if it matches exclude patterns
+        if any(
+            fnmatch.fnmatch(rel_root, pattern.rstrip('/')) or
+            fnmatch.fnmatch(rel_root + '/', pattern)
+            for pattern in exclude_patterns
+        ):
+            logging.debug(f"Skipping directory: {rel_root}")
+            continue
+            
         # If include pattern is ".", include everything unless excluded
         # Otherwise, check if directory matches include patterns
         if "." not in include_patterns and not any(
@@ -205,6 +228,11 @@ def get_files(dir, config, include_all=False, include_configs=False):
         for filename in filenames:
             rel_path = os.path.join(rel_root, filename)
             
+            # Skip files based on gitignore patterns
+            if not include_all and should_ignore(rel_path, ignore_patterns):
+                logging.debug(f"Skipping file {rel_path} - matches gitignore pattern")
+                continue
+                
             # Skip excluded files
             if not include_all and any(fnmatch.fnmatch(rel_path, pattern) for pattern in exclude_patterns):
                 logging.debug(f"Skipping file {rel_path} - matches exclude pattern")

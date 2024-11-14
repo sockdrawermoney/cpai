@@ -18,3 +18,11 @@ venv/
 
 # cpai specific
 cpai.egg-info/
+
+# Test coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Testing
+.pytest_cache/
