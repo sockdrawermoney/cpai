@@ -35,7 +35,7 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     
     # Misc
-    ".git/", "*.log", "*.md",
+    ".git/", "*.log", "*.md", "__init__.py", "__main__.py",
     
     # Dotfiles and dotfolders
     ".env",
