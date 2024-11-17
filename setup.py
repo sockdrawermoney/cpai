@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cpai",
-    version="1.2.0!",
+    version="1.2.0",
     author="Sock",
     author_email="sock@hey.com",
     description="A tool to concatenate multiple files into a single markdown text string for AI assistants",
