@@ -1,0 +1,2 @@
+esprima>=4.0.1
+pyperclip>=1.8.2

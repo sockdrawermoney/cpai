@@ -17,6 +17,7 @@ cpai [options] [file|directory...]
 ```
 
 Options:
+- `--tree` or `-t`: Generate a directory structure of the processed files and functions (if supported. currently only works for Javascript/TypeScript).
 - `-f [FILENAME], --file [FILENAME]`: Output to file. If FILENAME is not provided, defaults to 'output-cpai.md'.
 - `-n, --noclipboard`: Don't copy to clipboard.
 - `-a, --all`: Include all files (including tests, configs, etc.).

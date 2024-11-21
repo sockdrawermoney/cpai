@@ -1,138 +1,158 @@
 """JavaScript/TypeScript outline extractor."""
+import esprima
 import re
-from typing import List, Optional
-from .base import OutlineExtractor, FunctionInfo
+from typing import List, Optional, Dict, Set
+import logging
 
+from .base import FunctionInfo, OutlineExtractor
 
 class JavaScriptOutlineExtractor(OutlineExtractor):
     """Extract function outlines from JavaScript/TypeScript files."""
 
     SUPPORTED_EXTENSIONS = {'.js', '.jsx', '.ts', '.tsx'}
 
-    # Keywords that should not be treated as function names
-    IGNORED_NAMES = {
-        # React Hooks
-        'useState', 'useEffect', 'useContext', 'useReducer', 'useCallback', 
-        'useMemo', 'useRef', 'useImperativeHandle', 'useLayoutEffect', 
-        'useDebugValue', 'useQuery', 'useMutation', 'useQueryClient',
-        # Common variable names that might look like functions
-        'Promise', 'Error', 'Boolean', 'String', 'Number', 'Object',
-        'Array', 'Date', 'RegExp', 'Map', 'Set', 'WeakMap', 'WeakSet',
-        'resolve', 'reject', 'then', 'catch', 'finally',
-        # Control flow
-        'if', 'for', 'while', 'switch', 'try', 'catch'
-    }
-
-    # Regex patterns for different declarations
-    PATTERNS = {
-        'class': r'(?:export\s+)?class\s+([a-zA-Z_$][a-zA-Z0-9_$]*)',
-        'function': [
-            # Named function declarations (including exports)
-            r'(?:export\s+)?(?:async\s+)?function\s*\*?\s*([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*{?',
-            
-            # Arrow functions with explicit name (const/let/var)
-            r'(?:export\s+)?(?:const|let|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(?:async\s+)?\([^)]*\)\s*=>\s*{?',
-            
-            # Class methods (including constructor)
-            r'(?:public|private|protected|static|async|\*)*\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*\([^)]*\)\s*{?',
-        ]
-    }
-
     def supports_file(self, filename: str) -> bool:
         """Check if this extractor supports the given filename."""
         return any(filename.lower().endswith(ext) for ext in self.SUPPORTED_EXTENSIONS)
 
-    def get_leading_comment(self, lines: List[str], current_line: int) -> Optional[str]:
-        """Extract comment block above the current line."""
-        comments = []
-        line_num = current_line - 1
-        
-        # Skip empty lines before comment
-        while line_num >= 0 and not lines[line_num].strip():
-            line_num -= 1
-            
-        # Collect single-line comments
-        while line_num >= 0:
-            line = lines[line_num].strip()
-            if line.startswith('//'):
-                comments.insert(0, line[2:].strip())
-                line_num -= 1
-            else:
-                break
-                
-        # If we found single-line comments, return them
-        if comments:
-            return ' '.join(comments)
-            
-        # Check for multi-line comment
-        if line_num >= 0:
-            line = lines[line_num].strip()
-            if line.endswith('*/'):
-                comment_lines = []
-                while line_num >= 0 and not line.startswith('/*'):
-                    if line.endswith('*/'):
-                        line = line[:-2].strip()
-                    if line.startswith('*'):
-                        line = line[1:].strip()
-                    if line:
-                        comment_lines.insert(0, line)
-                    line_num -= 1
-                    line = lines[line_num].strip() if line_num >= 0 else ''
-                return ' '.join(comment_lines) if comment_lines else None
-                
-        return None
-
     def extract_functions(self, content: str) -> List[FunctionInfo]:
         """Extract function information from JavaScript/TypeScript content."""
         functions = []
-        lines = content.split('\n')
         current_class = None
+        current_path = []
+        seen_names = set()
         
-        for i, line in enumerate(lines):
-            stripped_line = line.strip()
+        def get_leading_comment(node) -> Optional[str]:
+            """Extract the leading comment for a node."""
+            if not hasattr(node, 'loc'):
+                return None
             
-            # Skip empty lines and comments
-            if not stripped_line or stripped_line.startswith('//') or stripped_line.startswith('/*'):
-                continue
-
-            # Check for class definitions
-            class_match = re.search(self.PATTERNS['class'], stripped_line)
-            if class_match:
-                current_class = class_match.group(1)
-                leading_comment = self.get_leading_comment(lines, i)
-                functions.append(FunctionInfo(
-                    name=current_class,
-                    signature=stripped_line,
-                    line_number=i + 1,
-                    type='class',
-                    leading_comment=leading_comment
-                ))
-                continue
-
-            # Check for function definitions
-            for pattern in self.PATTERNS['function']:
-                match = re.search(pattern, stripped_line)
-                if match:
-                    name = match.group(1)
-                    
-                    # Skip ignored names
-                    if name in self.IGNORED_NAMES:
-                        continue
-                        
-                    # If we're in a class, prefix the name unless it's a constructor
-                    if current_class and name != 'constructor':
-                        full_name = f"{current_class}.{name}"
-                    else:
-                        full_name = name
-
-                    leading_comment = self.get_leading_comment(lines, i)
-                    functions.append(FunctionInfo(
-                        name=full_name,
-                        signature=stripped_line,
-                        line_number=i + 1,
-                        type='method' if current_class else 'function',
-                        leading_comment=leading_comment
-                    ))
+            # Get the line number of the node
+            line_number = node.loc.start.line
+            
+            # Find the closest comment that ends right before this node
+            closest_comment = None
+            for comment in getattr(node, 'leadingComments', []):
+                if hasattr(comment, 'loc') and comment.loc.end.line == line_number - 1:
+                    closest_comment = comment
                     break
+            
+            if closest_comment:
+                # Clean up the comment text
+                text = closest_comment.value.strip()
+                # Remove common comment markers and normalize whitespace
+                text = re.sub(r'\/\*|\*\/|\/\/|\*', '', text)
+                return ' '.join(text.split())
+            return None
 
+        def get_full_path(name):
+            # Filter out empty strings and join with dots
+            path_parts = filter(None, current_path + [name])
+            return '.'.join(path_parts)
+
+        def add_function(name: str, node):
+            """Helper to add function while avoiding duplicates"""
+            if not name or not isinstance(name, str):
+                return
+                
+            # Skip internal implementation details and common patterns
+            if (name.startswith('_') or 
+                name.startswith('use') or  # Skip all React hooks
+                name in ('getState', 'getContext', 'send', 'transition', 'handleError', 'cleanup',
+                        'componentDidMount', 'componentDidUpdate', 'componentWillUnmount', 'render',
+                        'mutate', 'mutateAsync', 'reset', 'onMutate', 'onError', 'onSettled', 'onSuccess',
+                        'queryFn', 'mutationFn', 'backoff', 'shouldRetry')):
+                return
+                
+            full_name = get_full_path(name)
+            if full_name in seen_names:
+                return
+                
+            seen_names.add(full_name)
+            
+            # Get the leading comment if available
+            leading_comment = get_leading_comment(node)
+            
+            functions.append(FunctionInfo(
+                name=full_name,
+                line_number=node.loc.start.line if hasattr(node, 'loc') else 0,
+                leading_comment=leading_comment
+            ))
+
+        try:
+            # Parse the content with comments
+            ast = esprima.parseScript(content, {'comment': True, 'loc': True, 'jsx': True})
+            
+            def visit_node(node, parent=None):
+                nonlocal current_class, current_path
+                
+                # Store previous context
+                prev_class = current_class
+                prev_path = current_path.copy()
+                
+                try:
+                    if node.type == 'ClassDeclaration':
+                        if hasattr(node, 'id') and hasattr(node.id, 'name'):
+                            current_class = node.id.name
+                            current_path.append(current_class)
+                            add_function(current_class, node)
+                    
+                    elif node.type == 'MethodDefinition':
+                        if hasattr(node, 'key') and hasattr(node.key, 'name'):
+                            name = node.key.name
+                            if current_class:
+                                current_path.append(name)
+                            add_function(name, node)
+                    
+                    elif node.type == 'FunctionDeclaration':
+                        if hasattr(node, 'id') and hasattr(node.id, 'name'):
+                            name = node.id.name
+                            current_path.append(name)
+                            add_function(name, node)
+                    
+                    elif node.type == 'VariableDeclaration':
+                        for declarator in node.declarations:
+                            if (declarator.init and 
+                                declarator.init.type in ('ArrowFunctionExpression', 'FunctionExpression') and
+                                hasattr(declarator, 'id') and 
+                                hasattr(declarator.id, 'name')):
+                                name = declarator.id.name
+                                current_path.append(name)
+                                add_function(name, declarator)
+                    
+                    # Visit children
+                    for key, value in vars(node).items():
+                        if isinstance(value, list):
+                            for item in value:
+                                if isinstance(item, dict) and item.get('type'):
+                                    visit_node(item, node)
+                        elif isinstance(value, dict) and value.get('type'):
+                            visit_node(value, node)
+                
+                finally:
+                    # Restore previous context
+                    current_class = prev_class
+                    current_path = prev_path
+            
+            # Start the traversal
+            visit_node(ast)
+            
+        except Exception as e:
+            logging.error(f"Failed to parse JavaScript/TypeScript: {e}")
+        
         return functions
+
+    def format_function_for_clipboard(self, func: FunctionInfo) -> str:
+        """Format a single function for clipboard output."""
+        return f"{func.name}"
+
+    def format_functions_for_clipboard(self, functions: List[FunctionInfo]) -> str:
+        """Format function information for clipboard output."""
+        if not functions:
+            return ""
+        
+        # Sort functions by name for consistent ordering
+        functions = sorted(functions, key=lambda f: f.name)
+        
+        # Convert functions to signatures only
+        return "\n".join(self.format_function_for_clipboard(func) for func in functions)

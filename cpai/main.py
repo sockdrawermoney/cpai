@@ -7,8 +7,9 @@ import textwrap
 import logging
 import fnmatch
 import tempfile
+import re
 from typing import List, Dict, Any, Optional
-from .outline.cli import extract_outline
+from .outline.cli import FunctionInfo
 
 # Function to configure logging
 def configure_logging(debug):
@@ -256,55 +257,196 @@ def get_files(dir, config, include_all=False, include_configs=False):
     logging.debug(f"Total files found: {len(files)}")
     return files
 
-def process_file(file_path: str, options: Dict[str, Any]) -> Optional[str]:
-    """Process a single file and return its content."""
-    if not os.path.isfile(file_path):
-        logging.warning(f"Skipping {file_path} - not a file")
-        return None
-
-    if options.get('outline'):
-        functions = extract_outline(file_path)
-        if not functions:
-            return None
-            
-        content = [f"## {file_path}"]
-        current_class = None
-            
-        for func in functions:
-            # Add a newline before each new class
-            if func.type == 'class' and len(content) > 1:
-                content.append("")
-                    
-            if func.type == 'class':
-                current_class = func.name
-                if func.leading_comment:
-                    content.append(func.leading_comment)
-                content.append(f"`{func.signature}`")
-            else:
-                # Add newline between functions unless it's a method right after its class
-                if len(content) > 1 and not (func.type == 'method' and functions[functions.index(func)-1].type == 'class'):
-                    content.append("")
-                        
-                if func.leading_comment:
-                    content.append(func.leading_comment)
-                    
-                if func.type == 'method':
-                    display_name = func.name.split('.')[-1] if '.' in func.name else func.name
-                    content.append(f"`{func.signature}`")
-                else:
-                    content.append(f"`{func.signature}`")
-                        
-        return '\n'.join(content)
-        
+def extract_outline(file_path):
+    """Extract function outlines from a file."""
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            return f.read()
+            content = f.read()
     except Exception as e:
         logging.error(f"Failed to read file {file_path}: {e}")
         return None
 
+    functions = []
+    
+    # Extract classes and their methods
+    class_pattern = r'(?:export\s+)?(?:abstract\s+)?class\s+(\w+)[^{]*\{'
+    for match in re.finditer(class_pattern, content):
+        class_name = match.group(1)
+        class_start = match.start()
+        
+        # Get leading comment if any
+        leading_comment = None
+        comment_match = re.search(r'/\*\*(.*?)\*/\s*$|//\s*(.*)$', content[:class_start], re.MULTILINE | re.DOTALL)
+        if comment_match:
+            leading_comment = (comment_match.group(1) or comment_match.group(2)).strip()
+        
+        functions.append(FunctionInfo(
+            name=class_name,
+            signature=match.group(0).strip(),
+            line_number=content[:class_start].count('\n') + 1,
+            type='class',
+            leading_comment=leading_comment
+        ))
+
+    # Extract standalone functions
+    function_pattern = r'(?:export\s+)?(?:async\s+)?function\s*(\w+)[^{]*\{'
+    for match in re.finditer(function_pattern, content):
+        func_name = match.group(1)
+        func_start = match.start()
+        
+        # Get leading comment if any
+        leading_comment = None
+        comment_match = re.search(r'/\*\*(.*?)\*/\s*$|//\s*(.*)$', content[:func_start], re.MULTILINE | re.DOTALL)
+        if comment_match:
+            leading_comment = (comment_match.group(1) or comment_match.group(2)).strip()
+        
+        functions.append(FunctionInfo(
+            name=func_name,
+            signature=match.group(0).strip(),
+            line_number=content[:func_start].count('\n') + 1,
+            type='function',
+            leading_comment=leading_comment
+        ))
+
+    # Extract arrow functions and assignments
+    arrow_pattern = r'(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[^=]*)\s*=>\s*[{]'
+    for match in re.finditer(arrow_pattern, content):
+        func_name = match.group(1)
+        func_start = match.start()
+        
+        # Get leading comment if any
+        leading_comment = None
+        comment_match = re.search(r'/\*\*(.*?)\*/\s*$|//\s*(.*)$', content[:func_start], re.MULTILINE | re.DOTALL)
+        if comment_match:
+            leading_comment = (comment_match.group(1) or comment_match.group(2)).strip()
+        
+        functions.append(FunctionInfo(
+            name=func_name,
+            signature=match.group(0).strip(),
+            line_number=content[:func_start].count('\n') + 1,
+            type='function',
+            leading_comment=leading_comment
+        ))
+
+    return functions
+
+def process_file(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
+    """Process a single file and return its content and outline."""
+    try:
+        # In tree mode, we only need the outline
+        if options.get('tree'):
+            outline = extract_outline(file_path)
+            return {'outline': outline} if outline else None
+            
+        # For regular mode, get both content and outline
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        return {
+            'content': content,
+            'outline': extract_outline(file_path)
+        }
+        
+    except Exception as e:
+        logging.error(f"Failed to read file {file_path}: {e}")
+        return None
+
+def format_outline_tree(files, options):
+    """Format files and their functions as a tree structure."""
+    tree = {}
+    
+    for file_path, content in files.items():
+        if not content or not content.get('outline'):
+            continue
+            
+        parts = os.path.normpath(file_path).split(os.sep)
+        current = tree
+        
+        # Build path in tree
+        for part in parts[:-1]:
+            if not part or part == '.':
+                continue
+            if part not in current:
+                current[part] = {}
+            current = current[part]
+        
+        # Add file node
+        filename = parts[-1]
+        if filename not in current:
+            current[filename] = {}
+            
+        # Add function nodes
+        functions = {}
+        for func in content['outline']:
+            # Only include top-level functions (no dots in name)
+            if '.' not in func.name:
+                # Store function name and its comment if it exists
+                comment = func.leading_comment if hasattr(func, 'leading_comment') and func.leading_comment else None
+                if comment:
+                    # Clean up the comment - remove comment markers and extra whitespace
+                    comment = ' '.join(comment.replace('/*', '').replace('*/', '').replace('//', '').split())
+                functions[func.name] = comment
+        
+        if functions:
+            current[filename] = functions
+    
+    return tree
+
+def print_tree(tree, prefix='', is_last=True, skip_empty=True, output_lines=None):
+    """Print a tree structure with proper indentation."""
+    if not tree:
+        return
+        
+    items = sorted(tree.items())
+    if skip_empty and not items:
+        return
+        
+    for i, (name, subtree) in enumerate(items):
+        is_last_item = i == len(items) - 1
+        connector = '└── ' if is_last_item else '├── '
+        next_prefix = prefix + ('    ' if is_last_item else '│   ')
+        
+        # If subtree is a dict of function names to comments
+        if isinstance(subtree, dict) and any(isinstance(v, (str, type(None))) for v in subtree.values()):
+            # Add file name
+            line = f"{prefix}{connector}{name}"
+            if output_lines is not None:
+                output_lines.append(line)
+            
+            # Find the longest function name for alignment
+            max_len = max(len(f"{next_prefix}└── {func_name}()") for func_name in subtree.keys())
+            
+            # Sort functions by name
+            for j, (func_name, comment) in enumerate(sorted(subtree.items())):
+                is_last_func = j == len(subtree) - 1
+                func_connector = '└── ' if is_last_func else '├── '
+                func_line = f"{next_prefix}{func_connector}{func_name}()"
+                
+                # Add comment if it exists
+                if comment:
+                    padding = " " * (max_len - len(func_line) + 2)
+                    func_line = f"{func_line}{padding}# {comment}"
+                
+                if output_lines is not None:
+                    output_lines.append(func_line)
+        else:
+            # Add directory name
+            line = f"{prefix}{connector}{name}"
+            if output_lines is not None:
+                output_lines.append(line)
+            print_tree(subtree, next_prefix, is_last_item, skip_empty, output_lines)
+
 def format_content(files, options):
-    logging.debug("Formatting content")
+    """Format content based on options."""
+    logging.debug(f"Formatting content with options: {options}")
+    
+    if options.get('tree'):
+        tree = format_outline_tree(files, options)
+        output_lines = []
+        print_tree(tree, output_lines=output_lines)
+        return '\n'.join(output_lines)
+    
+    # Regular mode output
     output = "## Directory Structure\n```\n"
     dir_structure = set()
     for file in files:
@@ -313,13 +455,13 @@ def format_content(files, options):
         depth = len(dir.split(os.sep)) - 1
         output += "  " * depth + (os.path.basename(dir) or ".") + "/\n"
     output += "```\n\n"
-
-    for file in files:
-        content = process_file(file, options)
-        if content is None:
+    
+    for file_path, file_data in files.items():
+        if file_data is None or file_data.get('content') is None:
             continue
-        extension = os.path.splitext(file)[1][1:]  # remove the dot
-        output += f"\n## {file}\n`{extension}\n{content}\n`\n"
+        extension = os.path.splitext(file_path)[1][1:]  # remove the dot
+        output += f"\n## {file_path}\n`{extension}\n{file_data['content']}\n`\n"
+    
     return output
 
 def format_tree(files):
@@ -329,6 +471,8 @@ def format_tree(files):
         parts = file.split(os.sep)
         current = tree
         for part in parts[:-1]:
+            if not part or part == '.':
+                continue
             if part not in current:
                 current[part] = {}
             current = current[part]
@@ -362,61 +506,21 @@ def format_tree_string(tree, prefix=""):
     return final_result
 
 def write_output(content, config):
-    logging.debug("Writing output")
-    content_size = len(content)
-    chunk_size = config['chunkSize']
-    
-    # Check content size and warn if too large
-    if content_size > chunk_size:
-        if not config.get('files'):
-            logging.warning("No files to display in tree structure")
-            tree = "(no files)"
-        else:
-            tree = format_tree(config['files'])
-            logging.debug(f"Generated tree structure: {repr(tree)}")
-            
-        print(f"\nWarning: Content size ({content_size} characters) exceeds the maximum size ({chunk_size} characters).")
-        print("\nIncluded files:")
-        print(tree)
-        print("\nTo reduce content size, you can:")
-        print("1. Create a cpai.config.json file to customize inclusion/exclusion")
-        print("2. Use -x/--exclude to exclude specific paths (e.g., cpai -x tests/ docs/)")
-        print("3. Be more specific about which directories to process")
+    """Write the output to clipboard or file."""
+    if not content:
+        return
         
-        # Only proceed with file output if requested
-        if not config['outputFile']:
-            print("\nContent too large for clipboard. Use -f to write to file instead.")
-            return
-
-    # Handle file output
-    output_file = config['outputFile']
-    if output_file:
-        if isinstance(output_file, bool):
-            output_file = 'output-cpai.md'
-        try:
-            with open(output_file, 'w') as f:
-                f.write(content)
-            logging.info(f"Output written to {output_file}")
-        except IOError as e:
-            logging.error(f"Failed to write to file {output_file}: {e}")
-
-    # Handle clipboard output only if content is within size limit
-    if config['usePastebin'] and content_size <= chunk_size:
-        try:
-            # Use pbcopy directly without shell=True or pipes
-            process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
-            process.communicate(content.encode('utf-8'))
-            if process.returncode == 0:
-                logging.info("Content copied to clipboard")
-            else:
-                logging.error(f"Failed to copy to clipboard: Command returned non-zero exit status {process.returncode}")
-        except UnicodeEncodeError as e:
-            # Pass through the full error message
-            logging.error(f"Failed to copy to clipboard: {str(e)}")
-        except subprocess.CalledProcessError as e:
-            # Remove the trailing period from the error message
-            error_msg = str(e).rstrip('.')
-            logging.error(f"Failed to copy to clipboard: {error_msg}")
+    if config.get('outputFile'):
+        output_file = config['outputFile']
+        with open(output_file, 'w') as f:
+            f.write(content)
+        logging.info(f"Output written to {output_file}")
+    else:
+        # Copy to clipboard using pyperclip
+        import pyperclip
+        pyperclip.copy(content)
+        if not config.get('tree'):
+            logging.info("Output copied to clipboard")
 
 def cpai(args, cli_options):
     logging.debug("Starting cpai function")
@@ -431,27 +535,29 @@ def cpai(args, cli_options):
     
     config.update(cli_options)
 
-    files = []
+    files = {}
     if args:
         for arg in args:
             if os.path.isdir(arg):
-                files.extend(get_files(arg, config, 
+                for file in get_files(arg, config, 
                                     include_all=cli_options.get('include_all', False),
-                                    include_configs=cli_options.get('include_configs', False)))
+                                    include_configs=cli_options.get('include_configs', False)):
+                    files[file] = process_file(file, cli_options)
             elif os.path.isfile(arg):  # Validate file exists
-                files.append(arg)
+                files[arg] = process_file(arg, cli_options)
             else:
                 logging.warning(f"Skipping '{arg}': not found")
     else:
-        files = get_files('.', config,
+        for file in get_files('.', config,
                          include_all=cli_options.get('include_all', False),
-                         include_configs=cli_options.get('include_configs', False))
+                         include_configs=cli_options.get('include_configs', False)):
+            files[file] = process_file(file, cli_options)
 
     if not files:
         logging.warning("No files found to process")
         return
 
-    config['files'] = files
+    config['files'] = list(files.keys())
     content = format_content(files, cli_options)
 
     write_output(content, config)
@@ -466,6 +572,7 @@ def main():
     parser.add_argument('-x', '--exclude', nargs='+', help="Additional patterns to exclude")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
     parser.add_argument('--outline', action='store_true', help="Extract function outlines instead of full content")
+    parser.add_argument('--tree', action='store_true', help="Display a tree view of the directory structure")
 
     try:
         args = parser.parse_args()
@@ -477,7 +584,8 @@ def main():
             'include_all': args.all,
             'include_configs': args.configs,
             'exclude': args.exclude,
-            'outline': args.outline
+            'outline': args.outline,
+            'tree': args.tree
         }
 
         logging.debug("Starting main function")
