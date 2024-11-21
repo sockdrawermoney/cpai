@@ -7,6 +7,8 @@ import textwrap
 import logging
 import fnmatch
 import tempfile
+from typing import List, Dict, Any, Optional
+from .outline.cli import extract_outline
 
 # Function to configure logging
 def configure_logging(debug):
@@ -135,7 +137,7 @@ def parse_gitignore(gitignore_path):
                         # Standard pattern
                         pattern = line  # Set pattern to the original line
                         if line.endswith('/*'):
-                            pattern = line[:-2]  # Remove /*
+                            pattern = pattern[:-2]  # Remove /*
                         elif line.endswith('/'):
                             pattern = line[:-1]  # Remove trailing /
                         ignore_patterns.append(('', pattern))
@@ -254,7 +256,54 @@ def get_files(dir, config, include_all=False, include_configs=False):
     logging.debug(f"Total files found: {len(files)}")
     return files
 
-def format_content(files):
+def process_file(file_path: str, options: Dict[str, Any]) -> Optional[str]:
+    """Process a single file and return its content."""
+    if not os.path.isfile(file_path):
+        logging.warning(f"Skipping {file_path} - not a file")
+        return None
+
+    if options.get('outline'):
+        functions = extract_outline(file_path)
+        if not functions:
+            return None
+            
+        content = [f"## {file_path}"]
+        current_class = None
+            
+        for func in functions:
+            # Add a newline before each new class
+            if func.type == 'class' and len(content) > 1:
+                content.append("")
+                    
+            if func.type == 'class':
+                current_class = func.name
+                if func.leading_comment:
+                    content.append(func.leading_comment)
+                content.append(f"`{func.signature}`")
+            else:
+                # Add newline between functions unless it's a method right after its class
+                if len(content) > 1 and not (func.type == 'method' and functions[functions.index(func)-1].type == 'class'):
+                    content.append("")
+                        
+                if func.leading_comment:
+                    content.append(func.leading_comment)
+                    
+                if func.type == 'method':
+                    display_name = func.name.split('.')[-1] if '.' in func.name else func.name
+                    content.append(f"`{func.signature}`")
+                else:
+                    content.append(f"`{func.signature}`")
+                        
+        return '\n'.join(content)
+        
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        logging.error(f"Failed to read file {file_path}: {e}")
+        return None
+
+def format_content(files, options):
     logging.debug("Formatting content")
     output = "## Directory Structure\n```\n"
     dir_structure = set()
@@ -266,10 +315,11 @@ def format_content(files):
     output += "```\n\n"
 
     for file in files:
-        with open(file, 'r') as f:
-            content = f.read()
+        content = process_file(file, options)
+        if content is None:
+            continue
         extension = os.path.splitext(file)[1][1:]  # remove the dot
-        output += f"\n## {file}\n```{extension}\n{content}\n```\n"
+        output += f"\n## {file}\n`{extension}\n{content}\n`\n"
     return output
 
 def format_tree(files):
@@ -402,7 +452,7 @@ def cpai(args, cli_options):
         return
 
     config['files'] = files
-    content = format_content(files)
+    content = format_content(files, cli_options)
 
     write_output(content, config)
 
@@ -415,6 +465,7 @@ def main():
     parser.add_argument('-c', '--configs', action='store_true', help="Include configuration files")
     parser.add_argument('-x', '--exclude', nargs='+', help="Additional patterns to exclude")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
+    parser.add_argument('--outline', action='store_true', help="Extract function outlines instead of full content")
 
     try:
         args = parser.parse_args()
@@ -425,7 +476,8 @@ def main():
             'usePastebin': not args.noclipboard,
             'include_all': args.all,
             'include_configs': args.configs,
-            'exclude': args.exclude
+            'exclude': args.exclude,
+            'outline': args.outline
         }
 
         logging.debug("Starting main function")
