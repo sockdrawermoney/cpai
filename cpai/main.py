@@ -342,9 +342,10 @@ def process_file(file_path: str, options: Dict[str, Any]) -> Dict[str, Any]:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
             
+        outline = extract_outline(file_path)
         return {
             'content': content,
-            'outline': extract_outline(file_path)
+            'outline': outline
         }
         
     except Exception as e:
@@ -519,8 +520,10 @@ def write_output(content, config):
         # Copy to clipboard using pyperclip
         import pyperclip
         pyperclip.copy(content)
-        if not config.get('tree'):
-            logging.info("Output copied to clipboard")
+        if config.get('tree'):
+            logging.info("✨ File and function tree copied to clipboard!")
+        else:
+            logging.info("Content copied to clipboard")
 
 def cpai(args, cli_options):
     logging.debug("Starting cpai function")
@@ -571,7 +574,6 @@ def main():
     parser.add_argument('-c', '--configs', action='store_true', help="Include configuration files")
     parser.add_argument('-x', '--exclude', nargs='+', help="Additional patterns to exclude")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
-    parser.add_argument('--outline', action='store_true', help="Extract function outlines instead of full content")
     parser.add_argument('--tree', action='store_true', help="Display a tree view of the directory structure")
 
     try:
@@ -584,7 +586,6 @@ def main():
             'include_all': args.all,
             'include_configs': args.configs,
             'exclude': args.exclude,
-            'outline': args.outline,
             'tree': args.tree
         }
 
