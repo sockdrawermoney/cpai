@@ -17,7 +17,7 @@ cpai [options] [file|directory...]
 ```
 
 Options:
-- `--tree` or `-t`: Generate a file and function tree (currently supports Javascript/TypeScript and Python).
+- `--tree` or `-t`: Generate a file and function tree (currently supports Javascript/TypeScript, Python, Solidity, and Rust).
 - `-f [FILENAME], --file [FILENAME]`: Output to file. If FILENAME is not provided, defaults to 'output-cpai.md'.
 - `-n, --noclipboard`: Don't copy to clipboard.
 - `-a, --all`: Include all files (including tests, configs, etc.).
@@ -67,7 +67,7 @@ cpai -f -n
 You can create a `cpai.config.json` file in your project root to customize behavior. By default, cpai will:
 1. Include only core source files (excluding tests, configs, build files, etc.)
 2. Look for source files in common directories (src/, app/, pages/, components/, lib/)
-3. Support common file extensions for JavaScript/TypeScript, Python, and Solidity projects
+3. Support common file extensions for JavaScript/TypeScript, Python, Solidity, and Rust projects
 
 Here are the default settings that cpai starts with (you can override these in your cpai.config.json):
 
