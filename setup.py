@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cpai",
-    version="1.2.0",
+    version="2.0.0",
     author="Sock",
     author_email="sock@hey.com",
     description="A tool to concatenate multiple files into a single markdown text string for AI assistants",
@@ -19,6 +19,11 @@ setup(
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.6",
+    install_requires=[
+        "pyperclip>=1.8.0",
+        "pytest>=7.0.0",
+        "esprima>=4.0.0",
+    ],
     entry_points={
         "console_scripts": [
             "cpai=cpai:main"

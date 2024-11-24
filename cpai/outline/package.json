@@ -1,0 +1,12 @@
+{
+  "name": "typescript-parser",
+  "version": "1.0.0",
+  "description": "TypeScript AST parser for cpai",
+  "main": "typescript_parser.js",
+  "dependencies": {
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.3"
+  }
+}

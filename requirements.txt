@@ -1,0 +1,7 @@
+esprima>=4.0.1
+pyperclip>=1.8.2
+pytest>=7.0.0
+pytest-cov>=4.0.0  # For test coverage reporting
+black>=22.0.0  # For code formatting
+flake8>=4.0.0  # For linting
+mypy>=0.990  # For type checking

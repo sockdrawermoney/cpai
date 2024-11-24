@@ -17,11 +17,12 @@ cpai [options] [file|directory...]
 ```
 
 Options:
-- `-f [FILENAME], --file [FILENAME]`: Output to file. If FILENAME is not provided, defaults to 'output-cpai.md'.
-- `-n, --noclipboard`: Don't copy to clipboard.
-- `-a, --all`: Include all files (including tests, configs, etc.).
-- `-c, --configs`: Include configuration files.
-- `-x PATTERN [PATTERN...], --exclude PATTERN [PATTERN...]`: Additional patterns to exclude.
+- `--tree` or `-t`: Generate a file and function tree (currently supports Javascript/TypeScript, Python, Solidity, and Rust)
+- `-f [FILENAME], --file [FILENAME]`: Output to file. If FILENAME is not provided, defaults to 'output-cpai.md'
+- `-n, --noclipboard`: Don't copy to clipboard
+- `-a, --all`: Include all files (including tests, configs, etc.)
+- `-c, --configs`: Include configuration files
+- `-x PATTERN [PATTERN...], --exclude PATTERN [PATTERN...]`: Additional patterns to exclude
 
 If no files or directories are specified, cpai will process all supported files in the current directory.
 
@@ -63,10 +64,49 @@ cpai -f -n
 
 ## Configuration
 
-You can create a `cpai.config.json` file in your project root to customize behavior. By default, cpai will:
+The tool can be configured using a `cpai.config.json` file in your project root. Here's an example configuration:
+
+```json
+{
+  "include": ["."],
+  "exclude": [
+    "**/*.min.js",
+    "**/*.bundle.js",
+    "**/vendor/**"
+  ],
+  "fileExtensions": [".js", ".py", ".ts"],
+  "outputFile": false,
+  "usePastebin": true,
+  "chunkSize": 90000
+}
+```
+
+### File Filtering
+
+The tool uses a combination of default exclude patterns, custom exclude patterns, and include patterns to determine which files to process:
+
+1. **Default Exclude Patterns**: A set of common patterns (like `node_modules`, `build`, `.git`, etc.) are always excluded by default.
+
+2. **Custom Exclude Patterns**: The `exclude` field in your config is additive - any patterns you specify are added to the default excludes.
+
+3. **Include Patterns**: The `include` field is the only way to override excludes. If a file matches an include pattern, it will be included even if it matches an exclude pattern.
+
+For example, if you want to process files in a `tests` directory (which is excluded by default):
+
+```json
+{
+  "include": ["./tests/**/*.py"]
+}
+```
+
+### File Extensions
+
+The `fileExtensions` field specifies which file types to process. If not specified, a default set of common extensions is used.
+
+You can create your own cpai.config.json to override any of these defaults. By default, cpai will:
 1. Include only core source files (excluding tests, configs, build files, etc.)
 2. Look for source files in common directories (src/, app/, pages/, components/, lib/)
-3. Support common file extensions for JavaScript/TypeScript, Python, and Solidity projects
+3. Support common file extensions for JavaScript/TypeScript, Python, Solidity, and Rust projects
 
 Here are the default settings that cpai starts with (you can override these in your cpai.config.json):
 
@@ -90,15 +130,6 @@ Here are the default settings that cpai starts with (you can override these in y
     ".bash", ".md", ".json", ".yaml", ".yml", ".toml"
   ],
   "chunkSize": 90000
-}
-```
-
-You can create your own cpai.config.json to override any of these defaults. For example, to only include Python files from a specific directory:
-
-```json
-{
-  "include": ["my_project/src"],
-  "fileExtensions": [".py"]
 }
 ```
 

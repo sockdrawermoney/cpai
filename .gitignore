@@ -26,3 +26,5 @@ htmlcov/
 
 # Testing
 .pytest_cache/
+
+node_modules/
