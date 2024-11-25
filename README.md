@@ -17,9 +17,10 @@ cpai [options] [file|directory...]
 ```
 
 Options:
-- `--tree` or `-t`: Generate a file and function tree (currently supports Javascript/TypeScript, Python, Solidity, and Rust)
+- `--tree` or `-t`: Generate a file and function tree
 - `-f [FILENAME], --file [FILENAME]`: Output to file. If FILENAME is not provided, defaults to 'output-cpai.md'
 - `-n, --noclipboard`: Don't copy to clipboard
+- `--stdout`: Output to stdout instead of clipboard
 - `-a, --all`: Include all files (including tests, configs, etc.)
 - `-c, --configs`: Include configuration files
 - `-x PATTERN [PATTERN...], --exclude PATTERN [PATTERN...]`: Additional patterns to exclude
@@ -46,20 +47,14 @@ cpai src/ -a
 # Process core source files and include configs
 cpai src/ -c
 
-# Process specific files, copy to clipboard only
-cpai file1.py file2.js
+# Process files and output to stdout instead of clipboard
+cpai src/ --stdout
 
-# Output to file (output-cpai.md) and clipboard
-cpai -f
+# Display directory and function tree structure in stdout
+cpai src/ --tree --stdout
 
-# Output to custom file and clipboard
-cpai -f custom_output.md
-
-# Output to clipboard only, no file output
-cpai -n
-
-# Output to file only, no clipboard
-cpai -f -n
+# Copy tree structure to clipboard
+cpai src/ --tree
 ```
 
 ## Configuration
@@ -139,27 +134,16 @@ The `chunkSize` parameter determines the maximum number of characters in each ch
 
 By default, cpai will:
 1. Generate a directory structure of the processed files.
-2. Concatenate the content of all processed files into a single markdown string.
-3. If the content exceeds the specified chunk size:
-   - A warning will be displayed showing the directory structure of included files like this:
-     ```
-     src/
-     ├── components/
-     │   ├── Button.tsx
-     │   └── Input.tsx
-     ├── pages/
-     │   ├── index.tsx
-     │   └── about.tsx
-     └── utils/
-         └── helpers.ts
-     ```
-   - Suggestions will be provided for managing large outputs:
-     - Creating a cpai.config.json file to customize inclusion/exclusion
-     - Using the -x/--exclude option to exclude specific paths (e.g., cpai -x tests/ docs/)
-     - Being more specific about which directories to process
-   - When writing to file: The content will be written as a single file with chunk separators
-   - When copying to clipboard: The content will be split into chunks, and the user will be prompted to press Enter before copying each chunk
-4. Copy the string (or chunks) to the clipboard (on macOS, using pbcopy).
+2. When using `--tree`:
+   - Display a clean tree view of the directory structure and function outlines
+   - Skip markdown headers and code blocks for cleaner output
+3. Without `--tree`:
+   - Concatenate the content of all processed files into a single markdown string
+   - Include directory structure at the top
+4. Handle output based on options:
+   - When using `--stdout`: Output directly to terminal
+   - When using `-f/--file`: Write to specified file
+   - Otherwise: Copy to clipboard (using pbcopy on macOS)
 
 The output format is:
 

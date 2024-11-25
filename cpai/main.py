@@ -419,6 +419,11 @@ def format_content(files: Dict[str, Dict], options: Dict) -> str:
     
     output = []
     
+    # If in tree mode, just output the tree structure
+    if options.get('tree'):
+        tree = build_tree_structure(rel_files)
+        return format_tree_with_outlines(tree)
+    
     # Add tree outline at the top
     tree = build_tree_structure(rel_files)
     output.append("# Project Outline")
@@ -528,7 +533,7 @@ def write_output(content, config):
             logging.error(f"Failed to write to file: {e}")
     
     # Copy to clipboard if enabled
-    if config.get('usePastebin', True):
+    if config.get('usePastebin', True) and not config.get('stdout'):
         try:
             process = subprocess.Popen(['pbcopy'], stdin=subprocess.PIPE)
             process.communicate(content.encode('utf-8'))
@@ -545,6 +550,8 @@ def write_output(content, config):
             logging.error(f"Failed to copy to clipboard: {e}")
         except Exception as e:
             logging.error(f"Failed to copy to clipboard: {e}")
+    elif config.get('stdout'):
+        print(content)
 
 def should_process_file(file_path: str, config: Dict) -> bool:
     """Check if a file should be processed based on configuration.
@@ -812,6 +819,7 @@ def main():
     parser.add_argument('files', nargs='*', help="Files or directories to process")
     parser.add_argument('-f', '--file', nargs='?', const=True, help="Output to file. Optionally specify filename.")
     parser.add_argument('-n', '--noclipboard', action='store_true', help="Don't copy to clipboard")
+    parser.add_argument('--stdout', action='store_true', help="Output to stdout instead of clipboard")
     parser.add_argument('-a', '--all', action='store_true', help="Include all files (including tests, configs, etc.)")
     parser.add_argument('-x', '--exclude', nargs='+', help="Additional patterns to exclude")
     parser.add_argument('--debug', action='store_true', help="Enable debug logging")
@@ -823,10 +831,11 @@ def main():
 
         cli_options = {
             'outputFile': args.file if args.file is not None else False,
-            'usePastebin': not args.noclipboard,
+            'usePastebin': not args.noclipboard and not args.stdout,
             'include_all': args.all,
             'exclude': args.exclude,
-            'tree': args.tree
+            'tree': args.tree,
+            'stdout': args.stdout
         }
 
         logging.debug("Starting main function")
