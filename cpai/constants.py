@@ -15,7 +15,9 @@ DEFAULT_EXCLUDE_PATTERNS = [
     
     # Test files
     "**/test/**", "**/tests/**", "**/__tests__/**",
-    "**/*.test.*", "**/*.spec.*",
+    "**/*.test.*", "**/*.spec.*", "**/test_*.py",
+    "**/*_test.py", "**/*_spec.py", "**/*_test.js",
+    "**/*_spec.js", "**/*Test.*", "**/*Spec.*",
     
     # IDE and OS
     "**/.idea/**", "**/.vscode/**", "**/.DS_Store",
